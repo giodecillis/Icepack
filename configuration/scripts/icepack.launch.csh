@@ -26,6 +26,9 @@ else
 cat >> ${jobfile} << EOFR
 ./icepack >&! \$ICE_RUNLOG_FILE
 EOFR
+#cat >> ${jobfile} << EOFR
+#${ICE_EXE} >&! \$ICE_RUNLOG_FILE
+#EOFR
 
 endif
 

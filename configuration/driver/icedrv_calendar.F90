@@ -66,7 +66,8 @@
          ndtd     , & ! number of dynamics subcycles: dt_dyn=dt/ndtd
          stop_now       , & ! if 1, end program execution
          write_restart  , & ! if 1, write restart now
-         diagfreq           ! diagnostic output frequency (once per diagfreq*dt)
+         diagfreq , & ! diagnostic output frequency (once per diagfreq*dt)
+         dumpfreq_n   ! restar output frequency (once every dumpfreq_n dumpfreq)     
 
       real (kind=dbl_kind), public :: &
          dt             , & ! thermodynamics timestep (s)
@@ -76,6 +77,7 @@
          time_forc      , & ! time of last forcing update (s)
          yday           , & ! day of the year
          tday           , & ! absolute day number
+         tday0          , & ! absolute day number from simulation start
          dayyr          , & ! number of days per year
          basis_seconds  , & ! Seconds since calendar zero
          secday             ! seconds per day
@@ -163,6 +165,7 @@
       sec = mod(time,secday)            ! elapsed seconds into date at
                                         ! end of dt
       tday = (time-sec)/secday + c1     ! absolute day number
+      tday0 = (time-sec-time0)/secday + c1     ! absolute day number from sim start date
 
       ! Convert the current timestep into a calendar date
       call sec2time(nyr,month,mday,basis_seconds+time)
@@ -208,6 +211,7 @@
       sec = mod(ttime,secday)           ! elapsed seconds into date at
                                         ! end of dt
       tday = (ttime-sec)/secday + c1    ! absolute day number
+      tday0 = (ttime-sec-time0)/secday + c1    ! absolute day number from sim start
 
       ! Deterime the current date from the timestep
       call sec2time(nyr,month,mday,basis_seconds+ttime)
@@ -235,8 +239,9 @@
           if (new_month) &
                 write_restart = 1
         case ("d", "D")
-          if (new_day) &
+          if ((new_day).and.(MOD(INT(tday0) - 1, dumpfreq_n) == 0)) then
                 write_restart = 1
+          endif
         end select
 
         if (force_restart_now) write_restart = 1

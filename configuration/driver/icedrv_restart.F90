@@ -246,7 +246,7 @@
 
       subroutine restartfile (ice_ic)
 
-      use icedrv_calendar, only: istep0, istep1, time, time_forc
+      use icedrv_calendar, only: istep0, istep1, time, time_forc, time0, dt
       use icepack_intfc, only: icepack_aggregate
       use icedrv_domain_size, only: nilyr, nslyr, ncat, nfsd, nblyr
       use icedrv_domain_size, only: max_ntrcr, nx, n_iso, n_aero
@@ -332,6 +332,7 @@
       write(nu_diag,*) 'Restart read at istep=',istep0,time,time_forc
 
       istep1 = istep0
+      time0 = istep0*dt 
 
       !-----------------------------------------------------------------
       ! state variables

@@ -60,7 +60,7 @@
       use icedrv_domain_size, only: nilyr, nslyr, nblyr, max_ntrcr, ncat
       use icedrv_domain_size, only: n_iso, n_aero, nfsd
       use icedrv_calendar, only: year_init, istep0
-      use icedrv_calendar, only: dumpfreq, diagfreq, dump_last
+      use icedrv_calendar, only: dumpfreq, dumpfreq_n, diagfreq, dump_last
       use icedrv_calendar, only: npt, dt, ndtd, days_per_year, use_leap_years
       use icedrv_history, only: history_format
       use icedrv_restart_shared, only: restart, restart_dir, restart_file, restart_format
@@ -138,7 +138,7 @@
         ice_ic,         restart,        restart_dir,     restart_file,  &
         restart_format, &
         dumpfreq,       diagfreq,       diag_file,       cpl_bgc,       &
-        conserv_check,  history_format
+        conserv_check,  history_format, dumpfreq_n
 
       namelist /grid_nml/ &
         kcatbound
@@ -255,6 +255,7 @@
       diag_file = 'ice_diag' ! history file name prefix
       cpl_bgc = .false.      !
       dumpfreq='y'           ! restart frequency option
+      dumpfreq_n = 1
       dump_last=.false.      ! restart at end of run
       restart = .false.      ! if true, read restart files for initialization
       restart_dir  = './'    ! write to executable dir for default
