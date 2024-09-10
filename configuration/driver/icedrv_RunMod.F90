@@ -224,11 +224,15 @@
          call runtime_diags(dt)       ! log file
          if (skl_bgc .or. z_tracers)  call bgc_diags
          if (tr_brine)                call hbrine_diags
+
+         if (history_format == 'nc') then
+            call history_write()
+         endif
       endif
 
-      if (history_format == 'nc') then
-         call history_write()
-      endif
+!      if (history_format == 'nc') then
+!         call history_write()
+!      endif
 
       if (write_restart == 1) then
          call dumpfile     ! core variables for restarting
