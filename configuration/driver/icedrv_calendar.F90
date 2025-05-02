@@ -11,12 +11,13 @@
       use icepack_intfc, only: icepack_warnings_flush, icepack_warnings_aborted
       use icedrv_constants, only: c0, c1, c100, c30, c360, c365, c3600
       use icedrv_constants, only: c4, c400, nu_diag, nu_diag_out
-      use icedrv_system, only: icedrv_system_abort
+      use icedrv_system, only: icedrv_system_abort, handle_err
 
       implicit none
       private
 
       public :: init_calendar, calendar, time2sec, sec2time
+      public :: time_after_reference, julian_day, get_model_date
 
       integer (kind=int_kind), public :: &
          days_per_year        , & ! number of days in one year
@@ -258,6 +259,121 @@
       endif
 
       end subroutine calendar
+
+   FUNCTION get_model_date(kcycle)
+       IMPLICIT NONE
+       INTEGER, OPTIONAL :: kcycle   ! if true keep year constant = year_init
+      
+       ! local
+       integer(kind=8) :: idate(7) !model date 
+       integer(kind=8) :: get_model_date(7) !model date 
+       integer(kind=8) :: imin, ihour, isec     !
+       INTEGER         :: icycle = 1000 
+
+       IF(PRESENT(kcycle)) icycle = kcycle
+       idate(1) = year_init + MOD(nyr - 1, icycle)
+       idate(2) = month
+       idate(3) = mday
+       ihour = INT(sec/3600.D0)
+       imin = INT((sec - 3600.D0*ihour)/60.D0)
+       isec = sec - 3600.D0*ihour - 60.D0*imin
+       idate(4) = ihour
+       idate(5) = imin
+       idate(6) = isec
+       idate(7) = 0.0
+
+       get_model_date = idate
+
+   END FUNCTION
+
+   FUNCTION time_after_reference(irefdate,yunits,kval)
+      !!----------------------------------------------------------------------
+      !!                 ***  time_from_reference  ***
+      !!
+      !! **Purpose  :   Converts "kval [yunits] since irefdate" to
+      !!                time in seconds after 0001-1-1 00:00:00
+      !!
+      !! ** Method  :
+      !!
+      !! ** Action  : -
+      !!            : -
+      !!----------------------------------------------------------------------
+      IMPLICIT NONE
+
+      INTEGER(KIND=8)           :: irefdate(7)          ! netcdf dataset reference date
+      CHARACTER(len=9),OPTIONAL :: yunits               ! unit of time (seconds/minutes/hours/days)
+      DOUBLE PRECISION,OPTIONAL :: kval                 ! value of time
+
+      DOUBLE PRECISION  :: time_after_reference
+      DOUBLE PRECISION  :: ztime
+      DOUBLE PRECISION  :: zoffs
+
+      INTEGER(KIND=8),PARAMETER   :: ione = 1
+      INTEGER(KIND=8),PARAMETER   :: izero = 0
+
+      INTEGER           :: idays, iyear, imonth, iday
+      INTEGER           :: ihours, imins, isecs
+      INTEGER           :: idays_in_year(0:12)
+      DATA              idays_in_year /0,31,59,90,120,151,181,212,243,273,304,334,365/
+
+      !! Calculate the number of days from 1/1/1 to irefdate
+      idays = julian_day(irefdate) - julian_day((/ione,ione,ione,izero,izero,izero,izero/))
+      ihours = irefdate(4)
+      imins = irefdate(5)
+      isecs = irefdate(6)
+
+      IF ( PRESENT(yunits) .AND. .NOT. PRESENT(kval)) CALL handle_err(1,'not enough arguments','time_after_reference')
+      IF ( .NOT. PRESENT(yunits) .AND. PRESENT(kval)) CALL handle_err(2,'not enough arguments','time_after_reference')
+
+      zoffs = idays*86400.D0 + ihours*3600.0D0 + imins*60.0D0 + DBLE(isecs)
+
+      IF (PRESENT(yunits) .AND. PRESENT(kval)) THEN
+         !! Calculate the total time in seconds
+         IF (TRIM(yunits) .EQ. "seconds") ztime = zoffs + kval
+         IF (TRIM(yunits) .EQ. "minutes") ztime = zoffs + 60.0D0*kval
+         IF (TRIM(yunits) .EQ. "hours"  ) ztime = zoffs + 3600.0D0*kval
+         IF (TRIM(yunits) .EQ. "days"   ) ztime = zoffs + 86400.0D0*kval
+      ELSE
+         !ztime = idays*86400.0D0 + 3600.0D0 * irefdate(4) + 60.0D0 * irefdate(5) + irefdate(6)
+         ztime = zoffs
+      END IF
+
+      time_after_reference = ztime
+
+   END FUNCTION
+
+   FUNCTION julian_day(kdate)
+      !!----------------------------------------------------------------------
+      !!                 ***  julian_day  ***
+      !!
+      !! **Purpose  :   Calculates the Julian day from a date YYYYmmDD
+      !!
+      !! ** Method  :
+      !!
+      !! ** Action  : -
+      !!            : -
+      !!----------------------------------------------------------------------
+      IMPLICIT NONE
+
+      INTEGER(KIND=8)   :: kdate(7)
+      INTEGER(KIND=8)   :: Y,M,D
+
+      INTEGER(KIND=8)   :: julian_day
+      INTEGER(KIND=8)   :: A,B,C
+
+      Y = kdate(1)
+      M = kdate(2)
+      D = kdate(3)
+
+      A = (1461 * (Y + 4800 + (M - 14)/12))/4
+      B = (367*(M - 2 - 12 * ((M - 14)/12)))/12
+      C = - (3*((Y + 4900 + (M - 14)/12)/100))/4 + D - 32075
+
+      julian_day        = A + B + C
+
+
+   END FUNCTION julian_day
+
 
 !=======================================================================
 

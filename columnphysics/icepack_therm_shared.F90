@@ -39,6 +39,7 @@
 
       real (kind=dbl_kind), parameter, public :: &
          ferrmax = 1.0e-3_dbl_kind    ! max allowed energy flux error (W m-2)
+         !ferrmax = 9.0e-2_dbl_kind    ! GIOVANNI max allowed energy flux error (W m-2)
                                       ! recommend ferrmax < 0.01 W m-2
 
       real (kind=dbl_kind), parameter, public :: &
