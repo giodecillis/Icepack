@@ -8,18 +8,22 @@
 
       use icedrv_kinds
       use icedrv_domain_size, only: nx
-      use icedrv_calendar, only: time, nyr, dayyr, mday, month, secday
+      use icedrv_calendar, only: time, nyr, dayyr, mday, month, hour, secday
       use icedrv_calendar, only: daymo, daycal, dt, yday, sec
+      use icedrv_calendar, only: get_model_date 
       use icedrv_constants, only: nu_diag, nu_forcing, nu_open_clos
       use icedrv_constants, only: c0, c1, c2, c10, c100, p5, c4, c24
       use icepack_intfc, only: icepack_warnings_flush, icepack_warnings_aborted
       use icepack_intfc, only: icepack_query_parameters
       use icepack_intfc, only: icepack_sea_freezing_temperature
       use icepack_intfc, only: icepack_init_wave
-      use icedrv_system, only: icedrv_system_abort
+      use icedrv_system
       use icedrv_flux, only: zlvl, Tair, potT, rhoa, uatm, vatm, wind, &
          strax, stray, fsw, swvdr, swvdf, swidr, swidf, Qa, flw, frain, &
-         fsnow, sst, sss, uocn, vocn, qdp, hmix, Tf, opening, closing, sstdat
+         fsnow, sst, sss, uocn, vocn, qdp, hmix, Tf, opening, closing, sstdat, frzmlt
+      use icedrv_inputnc
+      use icedrv_phy
+      use icedrv_state, only: aice
 
       implicit none
       private
@@ -74,15 +78,21 @@
          atm_data_format, & ! 'bin'=binary or 'nc'=netcdf
          ocn_data_format, & ! 'bin'=binary or 'nc'=netcdf
          bgc_data_format, & ! 'bin'=binary or 'nc'=netcdf
-         atm_data_type,   & ! 'default', 'clim', 'CFS'
+         atm_data_type,   & ! 'default', 'clim', 'CFS', 'ECMWF'
          ocn_data_type,   & ! 'default', 'SHEBA'
          bgc_data_type,   & ! 'default', 'ISPOL', 'NICE'
          lateral_flux_type,   & ! 'uniform_ice', 'open_water'
          atm_data_file,   & ! atmospheric forcing data file
+         atm_pert_file,   & ! atmospheric forcing perturbation file
          ocn_data_file,   & ! ocean forcing data file
          ice_data_file,   & ! ice forcing data file
          bgc_data_file,   & ! biogeochemistry forcing data file
          precip_units       ! 'mm_per_month', 'mm_per_sec', 'mks'
+
+      real (kind=dbl_kind), public :: &
+         atm_longitude,   & ! atmospheric longitude for ECMWF
+         atm_latitude       ! atmospheric latitude for ECMWF
+
 
       character(char_len_long), public :: &
          data_dir           ! top directory for forcing data
@@ -103,6 +113,13 @@
 
       character (len=char_len_long), public :: &
          snw_ssp_table      ! snow table type 'test', 'snicar'
+
+      type(nc_data), public :: &
+         ecmwf_data, &         ! ecmwf netcdf dataset 
+         cglors_data           ! cglors netcdf dataset 
+
+      type(nc_data1d), public :: &
+         pert_atm_data         ! pointwise atm pert file
 
 !=======================================================================
 
@@ -158,10 +175,13 @@
           cldf_data(:) = c0          ! cloud fraction
 
       if (trim(atm_data_type(1:4)) == 'CFS')   call atm_CFS
+      if (trim(atm_data_type(1:5)) == 'ECMWF') call atm_ECMWF(0)
       if (trim(atm_data_type(1:4)) == 'clim')  call atm_climatological
       if (trim(atm_data_type(1:5)) == 'ISPOL') call atm_ISPOL
       if (trim(atm_data_type(1:4)) == 'NICE')  call atm_NICE
       if (trim(ocn_data_type(1:5)) == 'SHEBA') call ice_open_clos
+
+      if (trim(atm_pert_file)/='') call atm_pert(0)
 
       if (restore_ocn) then
         if (trestore == 0) then
@@ -176,6 +196,7 @@
 
       if (trim(ocn_data_type(1:5)) == 'ISPOL') call ocn_ISPOL
       if (trim(ocn_data_type(1:4)) == 'NICE')  call ocn_NICE
+      if (trim(ocn_data_type(1:4)) == 'CGLO')  call ocn_CGLO(0)
 
       call prepare_forcing (Tair_data,     fsw_data,      &
                             cldf_data,     &
@@ -256,6 +277,9 @@
          swidr(:) = c1intp * swidr_data(mlast) + c2intp * swidr_data(mnext)
          swidf(:) = c1intp * swidf_data(mlast) + c2intp * swidf_data(mnext)
 
+      elseif (trim(atm_data_type) == 'ECMWF') then
+          CALL atm_ECMWF(1)
+
       elseif (trim(atm_data_type) == 'clim') then
          midmonth = 15  ! assume data is given on 15th of every month
          recslot = 1                             ! latter half of month
@@ -289,6 +313,8 @@
          swvdf(:) = c1intp * swvdf_data(mlast) + c2intp * swvdf_data(mnext)
          swidr(:) = c1intp * swidr_data(mlast) + c2intp * swidr_data(mnext)
          swidf(:) = c1intp * swidf_data(mlast) + c2intp * swidf_data(mnext)
+
+         !call atm_ECMWF(1)
 
       elseif (trim(atm_data_type) == 'ISPOL') then
 
@@ -386,6 +412,8 @@
 
       endif
 
+      if (trim(atm_pert_file)/='') call atm_pert(1)  !add pert to temperature
+
 ! possible bug:  is the ocean data also offset to the beginning of the field campaigns?
 
       if (trim(ocn_data_type) == 'ISPOL') then
@@ -425,6 +453,8 @@
          qdp     (:) = c1intp *  qdp_data(mlast) + c2intp *  qdp_data(mnext)
          hmix    (:) = c1intp * hmix_data(mlast) + c2intp * hmix_data(mnext)
 
+      elseif (trim(ocn_data_type) == 'CGLO') then
+         CALL ocn_CGLO(1)
       else
 
          ! use default values for all other data fields
@@ -585,6 +615,386 @@
       end subroutine atm_CFS
 
 !=======================================================================
+
+       subroutine setup_nc_forcing(nc_dataset)
+       USE netcdf
+
+       TYPE(nc_data), INTENT(INOUT) :: nc_dataset
+ 
+       integer (kind=int_kind) :: &
+           nt, &             ! time coordinate dimension
+           nx, &             ! longitude dimension
+           ny, &             ! latitude dimension
+           id_x, &           ! longitude point index
+           id_y, &           ! latitude point index
+           ierr, &           ! error code netcdf calls
+           ivarid, &         ! netcdf variable id
+           idimids(1), &        ! netcdf variable dimensions' ids
+           indates, &        ! time variable len
+           itype,   &        ! time variable type
+           id                ! netcdf file id
+       integer (kind=int8_kind) :: &
+           idate0(7)               ! reference date in dataset 
+       integer (kind=int8_kind), allocatable :: &
+           idates(:)      ! integer time variable
+ 
+       real (kind=dbl_kind) :: &
+           dlwsfc,  &     ! downwelling longwave (W/m2)
+           dswsfc,  &     ! downwelling shortwave (W/m2)
+           windu10, &     ! wind components (m/s)
+           windv10, &     !
+           temp2m,  &     ! 2m air temperature (K)
+           spechum ,&     ! specific humidity (kg/kg)
+           precip,  &     ! precipitation (kg/m2/s)
+           lon_p,   &     ! point longitude 
+           lat_p,   &     ! point latitude 
+           zx_min,   &     ! min netcdf x (longitude)  
+           zy_min,   &     ! min netcdf y (latitude) 
+           zx_max,   &     ! max netcdf x (longitude) 
+           zy_max,   &     ! max netcdf y (latitude) 
+           rdummy
+ 
+       real (kind=dbl_kind), allocatable :: &
+           zx_reg(:), &   ! x coordinate netcdf 
+           zy_reg(:), &   ! y coordinate netcdf 
+           zdates(:)
+
+       logical :: &
+           gout_x, &      ! point outside domain flag
+           gout_y, &      ! point outside domain flag
+           ldummy
+ 
+       character (char_len_long) :: filename
+       character(len=10) :: ylonname, ylatname
+       character(len=*), parameter :: subname='(setup_nc_forcing)'
+       character(len=*), parameter :: ytimevar='time'
+       character(len=80) :: ytunits, yreal_units
+
+       filename = nc_dataset%y_filename 
+       ylonname = nc_dataset%y_lonname 
+       ylatname = nc_dataset%y_latname 
+
+!      open netcdf dataset
+       call nc_open_read(id,filename)  
+       nc_dataset%file_id = id
+
+!      read lon lat dimesions
+       call nc_read_dim(id,ylonname,nx)
+       call nc_read_dim(id,ylatname,ny)
+
+       allocate(zx_reg(nx))
+       allocate(zy_reg(ny))
+
+!      read netcdf lon lat
+       call nc_read_var(id,ylonname,zx_reg)
+       call nc_read_var(id,ylatname,zy_reg)
+       zx_min = MINVAL(zx_reg)
+       zy_min = MINVAL(zy_reg)
+       zx_max = MAXVAL(zx_reg)
+       zy_max = MAXVAL(zy_reg)
+
+!      test point
+       lon_p = nc_dataset%zpoint_lon
+       lat_p = nc_dataset%zpoint_lat
+
+!      verify that netcdf domain includes sim coordinates 
+       gout_x = (lon_p .LT. zx_min) .OR. (lon_p .GT. zx_max)          
+       gout_y = (lat_p .LT. zy_min) .OR. (lat_p .GT. zy_max)          
+
+       IF(gout_x) call handle_err(0,'Error: point outside atm forcing regular domain (LON)', subname)
+       IF(gout_y) call handle_err(0,'Error: point outside atm forcing regular domain (LAT)', subname)
+
+!      determine lon lat indices 
+       id_x = FINDLOC(zx_reg, lon_p, 1)    
+       id_y = FINDLOC(zy_reg, lat_p, 1)    
+       nc_dataset%id_x = id_x
+       nc_dataset%id_y = id_y
+
+!      Time coordinate management
+       ierr = nf90_inq_varid(id,ytimevar,ivarid)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr,'Error: nf90_inq_varid generated an error', subname)
+
+       ierr = nf90_inquire_variable(id, ivarid, xtype=itype, dimids=idimids)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'Error: nf90_inquire_variable generated an error', subname)
+
+       ierr = nf90_get_att(id,ivarid,'units',ytunits)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'Error: nf90_get_att generated an error',subname)
+
+       IF (ytunits(1:7) .EQ. "seconds") yreal_units = "seconds"
+       IF (ytunits(1:7) .EQ. "minutes") yreal_units = "minutes"
+       IF (ytunits(1:5) .EQ. "hours"  ) yreal_units = "hours"
+       IF (ytunits(1:4) .EQ. "days"   ) yreal_units = "days"
+
+       !! get reference date of dataset
+       idate0 =  string2date_nc(ytunits)
+
+!       CALL nc_read_dim(id,'time',indates)
+       ierr = nf90_inquire_dimension(id,idimids(1),len=indates)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'nf90_inquire_dimension generated an error', subname)
+
+       IF ( itype .EQ. 4 .OR. itype .EQ. 10) THEN                !! type 10 for INT64
+          ALLOCATE( idates(indates) )
+          ALLOCATE( zdates(indates) )
+          ierr = nf90_get_var(id,ivarid,idates)
+          zdates = DBLE(idates)
+       ELSE IF ( itype .EQ. 5 .OR. itype .EQ. 6 ) THEN           !! float time
+          ALLOCATE( zdates(indates))
+          ierr = nf90_get_var(id,ivarid,zdates)
+       END IF
+
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'Error: nf90_get_var generated an error: '//nf90_strerror(ierr), subname)
+
+       nc_dataset%idate_0 = idate0
+       nc_dataset%y_tunits = yreal_units
+       nc_dataset%ztimes = zdates
+
+
+       DEALLOCATE(zdates)
+       IF(ALLOCATED(idates)) DEALLOCATE(idates)
+
+
+       end subroutine setup_nc_forcing
+
+!=======================================================================
+
+
+       subroutine setup_nc1d_forcing(nc_dataset)
+       USE netcdf
+
+       TYPE(nc_data1d), INTENT(INOUT) :: nc_dataset
+ 
+       integer (kind=int_kind) :: &
+           nt, &             ! time coordinate dimension
+           ierr, &           ! error code netcdf calls
+           ivarid, &         ! netcdf variable id
+           idimids(1), &        ! netcdf variable dimensions' ids
+           indates, &        ! time variable len
+           itype,   &        ! time variable type
+           id                ! netcdf file id
+       integer (kind=int8_kind) :: &
+           idate0(7)               ! reference date in dataset 
+       integer (kind=int8_kind), allocatable :: &
+           idates(:)      ! integer time variable
+ 
+       real (kind=dbl_kind) :: &
+           rdummy
+ 
+       real (kind=dbl_kind), allocatable :: &
+           zdates(:)
+
+       character (char_len_long) :: filename
+       character(len=*), parameter :: subname='(setup_nc1d_forcing)'
+       character(len=*), parameter :: ytimevar='time'
+       character(len=80) :: ytunits, yreal_units
+
+       filename = nc_dataset%y_filename 
+
+!      open netcdf dataset
+       call nc_open_read(id,filename)  
+       nc_dataset%file_id = id
+
+!      Time coordinate management
+       ierr = nf90_inq_varid(id,ytimevar,ivarid)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr,'Error: nf90_inq_varid generated an error', subname)
+
+       ierr = nf90_inquire_variable(id, ivarid, xtype=itype, dimids=idimids)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'Error: nf90_inquire_variable generated an error', subname)
+
+       ierr = nf90_get_att(id,ivarid,'units',ytunits)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'Error: nf90_get_att generated an error',subname)
+
+       IF (ytunits(1:7) .EQ. "seconds") yreal_units = "seconds"
+       IF (ytunits(1:7) .EQ. "minutes") yreal_units = "minutes"
+       IF (ytunits(1:5) .EQ. "hours"  ) yreal_units = "hours"
+       IF (ytunits(1:4) .EQ. "days"   ) yreal_units = "days"
+
+       !! get reference date of dataset
+       idate0 =  string2date_nc(ytunits)
+
+!       CALL nc_read_dim(id,'time',indates)
+       ierr = nf90_inquire_dimension(id,idimids(1),len=indates)
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'nf90_inquire_dimension generated an error', subname)
+
+       IF ( itype .EQ. 4 .OR. itype .EQ. 10) THEN                !! type 10 for INT64
+          ALLOCATE( idates(indates) )
+          ALLOCATE( zdates(indates) )
+          ierr = nf90_get_var(id,ivarid,idates)
+          zdates = DBLE(idates)
+       ELSE IF ( itype .EQ. 5 .OR. itype .EQ. 6 ) THEN           !! float time
+          ALLOCATE( zdates(indates))
+          ierr = nf90_get_var(id,ivarid,zdates)
+       END IF
+
+       IF (ierr /= nf90_noerr) CALL handle_err(ierr, 'Error: nf90_get_var generated an error: '//nf90_strerror(ierr), subname)
+
+       nc_dataset%idate_0 = idate0
+       nc_dataset%y_tunits = yreal_units
+       nc_dataset%ztimes = zdates
+
+
+       DEALLOCATE(zdates)
+       IF(ALLOCATED(idates)) DEALLOCATE(idates)
+
+
+       end subroutine setup_nc1d_forcing
+
+!=======================================================================
+
+
+
+!=======================================================================
+!   setup ECMWF nc dataset and get data
+       SUBROUTINE atm_ECMWF(mode)
+
+       IMPLICIT NONE
+
+       !arguments
+       integer (kind=int_kind), intent(in) :: mode
+
+       ! local
+       integer(kind=8)  :: idate(7) !model date 
+       integer          :: itimesid(2)
+       DOUBLE PRECISION :: zweights(2)
+       DOUBLE PRECISION :: zu10     !10m U wind component [m/s]
+       DOUBLE PRECISION :: zv10     !10m V wind component [m/s]
+       DOUBLE PRECISION :: zt2m     !2m temperature [K]
+       DOUBLE PRECISION :: zd2m     !2m dew point temperature [K]
+       DOUBLE PRECISION :: zssrd    !short-wave radiation downward [J/m**2]
+       DOUBLE PRECISION :: zstrd    !thermal (long-wave) radiation downward [J/m**2]
+       DOUBLE PRECISION :: ztp      !total precipitation [m]
+       DOUBLE PRECISION :: zmslp    !mean sea level pressure [Pa]
+       LOGICAL          :: lice(nx)
+       INTEGER          :: i        !do loop index 
+       real (kind=dbl_kind) :: &
+           Tffresh, &
+           rhofresh
+
+          SELECT CASE (mode)
+              CASE(0) ! initialization 
+                  ecmwf_data%y_filename = trim(data_dir)//'/'//trim(atm_data_file)
+                  ecmwf_data%y_lonname = "lon"
+                  ecmwf_data%y_latname = "lat"
+                  ecmwf_data%zpoint_lon = atm_longitude   !read coordinates from namelist 
+                  ecmwf_data%zpoint_lat = atm_latitude
+                  CALL setup_nc_forcing(ecmwf_data)
+
+!                  IF (atm_latitude.GE.80) qdp_data(:) = -3.0 ! 2 W/m2 from deep + 4 W/m2 counteracting larger !used by def slab ocean
+!                  IF (atm_latitude.GE.85) qdp_data(:) = -6.0 ! 2 W/m2 from deep + 4 W/m2 counteracting larger !used by def slab ocean
+
+              CASE(1) ! get data and interpolate in time
+
+                  call icepack_query_parameters(Tffresh_out=Tffresh, rhofresh_out=rhofresh)
+                  idate = get_model_date(ycycle)
+
+                  CALL nc_findtimes(idate, ecmwf_data%idate_0, ecmwf_data%y_tunits, ecmwf_data%ztimes, itimesid, zweights) 
+                  CALL nc_getscalar(ecmwf_data, 'u10', itimesid, zweights, zu10) 
+                  CALL nc_getscalar(ecmwf_data, 'v10', itimesid, zweights, zv10) 
+                  CALL nc_getscalar(ecmwf_data, 't2m', itimesid, zweights, zt2m) 
+                  CALL nc_getscalar(ecmwf_data, 'd2m', itimesid, zweights, zd2m) 
+                  CALL nc_getscalar(ecmwf_data, 'ssrd', itimesid, zweights, zssrd) 
+                  CALL nc_getscalar(ecmwf_data, 'strd', itimesid, zweights, zstrd) 
+                  CALL nc_getscalar(ecmwf_data, 'msl', itimesid, zweights, zmslp) 
+                  CALL nc_getscalar(ecmwf_data, 'tp', itimesid, zweights, ztp) 
+
+                  
+                  uatm(:) = zu10
+                  vatm(:) = zv10
+                  Tair(:) = zt2m
+
+                  !convert radiations from J/m**2 to W/m**2
+                  fsw(:) = zssrd/3600.D0 
+                  flw(:) = zstrd/3600.D0 
+
+                  ! divide shortwave into spectral bands
+                  swvdr(:) = fsw(:)*frcvdr        ! visible direct
+                  swvdf(:) = fsw(:)*frcvdf        ! visible diffuse
+                  swidr(:) = fsw(:)*frcidr        ! near IR direct
+                  swidf(:) = fsw(:)*frcidf        ! near IR diffuse
+
+                  !convert 2m dew point temperature to specific humidity
+                  lice = aice.GT.c0   !what is tmask?
+                  DO i = 1, nx
+                     Qa(i) = q_sat(zd2m, zmslp, lice(i) )  
+                  ENDDO
+
+                  ! Convert total precipitation from m to kg/m**2/s
+                  fsnow(:) = ztp*rhofresh/3600.D0
+
+                  ! split precipitation into rain and snow
+                  frain(:) = c0
+                  if (zt2m >= Tffresh) then
+                      frain(:) = fsnow(:)
+                      fsnow(:) = c0
+                  endif
+                  ! 
+                  zlvl(:) = c10
+
+                  ! air density
+                  DO i = 1, nx
+                     rhoa(i) = rho_air(zt2m, Qa(i), zmslp) 
+                  ENDDO  
+                  !rhoa(:) = 1.3_dbl_kind
+
+                  ! potential temperature
+                  potT(:) = Tair(:)*(1.D5/zmslp)**0.286    !
+                  !potT(:) = Tair(:)    !
+
+                  ! wind speed
+                  wind(:) = SQRT(uatm(:)**2 + vatm(:)**2)
+
+                  ! wind stress
+                  strax(:) = c0
+                  stray(:) = c0
+
+          END SELECT
+
+      end subroutine atm_ECMWF
+
+!=======================================================================
+!   setup atm_pert nc dataset and get data
+       SUBROUTINE atm_pert(mode)
+
+       IMPLICIT NONE
+
+       !arguments
+       integer (kind=int_kind), intent(in) :: mode
+
+       ! local
+       integer(kind=8)  :: idate(7) !model date 
+       integer          :: itimesid(2)
+       DOUBLE PRECISION :: zweights(2)
+       DOUBLE PRECISION :: z_pt2m     !2m temperature perturbation[K]
+       DOUBLE PRECISION :: z_pU10     !10m wind speed perturbation[m/s]
+       INTEGER          :: i        !do loop index 
+          
+          IF (trim(atm_pert_file).EQ."") RETURN
+
+          SELECT CASE (mode)
+              CASE(0) ! initialization 
+                  pert_atm_data%y_filename = trim(data_dir)//'/'//trim(atm_pert_file)
+                  CALL setup_nc1d_forcing(pert_atm_data)
+
+              CASE(1) ! get data and interpolate in time
+
+                  idate = get_model_date(ycycle)
+
+                  CALL nc_findtimes(idate, pert_atm_data%idate_0, pert_atm_data%y_tunits, pert_atm_data%ztimes, itimesid, zweights) 
+                  CALL nc_getscalar1d(pert_atm_data, 't2m_pert', itimesid, zweights, z_pt2m) 
+                  CALL nc_getscalar1d(pert_atm_data, 'U10_pert', itimesid, zweights, z_pU10) 
+
+                  Tair(:) = Tair(:) + z_pt2m  !add perturbation to temperature
+
+                  uatm(:) = z_pU10 * uatm(:)/wind(:)  !add pert to wind speeds
+                  vatm(:) = z_pU10 * vatm(:)/wind(:)
+
+                  ! wind speed
+                  wind(:) = SQRT(uatm(:)**2 + vatm(:)**2)
+
+                  
+          END SELECT
+
+      end subroutine atm_pert
+
 
       subroutine prepare_forcing (Tair,     fsw,      &
                                   cldf,     &
@@ -1023,6 +1433,64 @@
       end subroutine ocn_NICE
 
 !=======================================================================
+!   setup ECMWF nc dataset and get data
+       SUBROUTINE ocn_CGLO(mode)
+
+       IMPLICIT NONE
+
+       !arguments
+       integer (kind=int_kind), intent(in) :: mode
+
+       ! local
+       integer(kind=8)  :: idate(7) !model date 
+       integer          :: itimesid(2)
+       DOUBLE PRECISION :: zweights(2)
+       DOUBLE PRECISION :: zuocn     !ocean surface U current [m/s]
+       DOUBLE PRECISION :: zvocn     !ocean surface V current [m/s]
+       DOUBLE PRECISION :: zsst      !sea surface potential temperature [C]
+       DOUBLE PRECISION :: zsss      !sea surface salinity [psu]
+       INTEGER          :: i        !do loop index 
+       real (kind=dbl_kind) :: &
+           Tffresh, &
+           rhofresh
+
+          SELECT CASE (mode)
+              CASE(0) ! initialization 
+                    
+                  !if(oceanmixed_ice) then
+                  !    oceanmixed_ice = .false.
+                  !    WRITE(nu_diag, *) 'Turning off mixed layer model when forcing with CGLORS'
+                  !endif
+
+                  cglors_data%y_filename = trim(data_dir)//'/'//trim(ocn_data_file)
+                  cglors_data%y_lonname = "longitude"
+                  cglors_data%y_latname = "latitude"
+                  cglors_data%zpoint_lon = 150.0   !read coordinates from namelist 
+                  cglors_data%zpoint_lat = 80.0
+                  CALL setup_nc_forcing(cglors_data)
+
+              CASE(1) ! get data and interpolate in time
+
+                  idate = get_model_date()
+
+                  CALL nc_findtimes(idate, cglors_data%idate_0, cglors_data%y_tunits, cglors_data%ztimes, itimesid, zweights) 
+                  CALL nc_getscalar(cglors_data, 'uo_cglo', itimesid, zweights, zuocn) 
+                  CALL nc_getscalar(cglors_data, 'vo_cglo', itimesid, zweights, zvocn) 
+                  CALL nc_getscalar(cglors_data, 'thetao_cglo', itimesid, zweights, zsst) 
+                  CALL nc_getscalar(cglors_data, 'so_cglo', itimesid, zweights, zsss) 
+
+                  sst_temp(:) = zsst
+                  !sst     (:) = zsst
+                  sss     (:) = zsss
+                  uocn    (:) = zuocn
+                  vocn    (:) = zvocn
+
+          END SELECT
+
+      end subroutine ocn_CGLO
+
+
+!=======================================================================
 
       subroutine ocn_ISPOL
 
@@ -1090,13 +1558,27 @@
       integer (kind=int_kind) :: &
          i           ! horizontal indices
 
+      real (kind=dbl_kind)   :: &
+          cprho
+
+      real (kind=dbl_kind), parameter :: &
+         frzmlt_max = 1000.0_dbl_kind   ! max magnitude of frzmlt (W/m^2)
+
       character(len=*), parameter :: subname='(finish_ocn_forcing)'
+
+      call icepack_query_parameters(cprho_out=cprho)
 
       do i = 1, nx
          sss (i) = max (sss(i), c0)
          hmix(i) = max(hmix(i), c0)
          Tf  (i) = icepack_sea_freezing_temperature(sss(i))
+         !if ocn=CGLORS sst = sst_temp ==> sst is read from data in any case
          if (restore_ocn) sst(i) = sst(i) + (sst_temp(i)-sst(i))*dt/trest
+         if (.not.oceanmixed_ice) then 
+             frzmlt(i) = (Tf(i)-sst(i)) * cprho * hmix(i) / dt 
+             frzmlt(i) = min(max(frzmlt(i),-frzmlt_max), frzmlt_max)
+         endif
+         
       enddo
       call icepack_warnings_flush(nu_diag)
       if (icepack_warnings_aborted()) call icedrv_system_abort(string=subname, &

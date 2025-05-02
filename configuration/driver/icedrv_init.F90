@@ -68,7 +68,8 @@
       use icedrv_flux, only: default_season
       use icedrv_forcing, only: precip_units,    fyear_init,      ycycle
       use icedrv_forcing, only: atm_data_type,   ocn_data_type,   bgc_data_type
-      use icedrv_forcing, only: atm_data_file,   ocn_data_file,   bgc_data_file
+      use icedrv_forcing, only: atm_data_file, atm_pert_file,  ocn_data_file,   bgc_data_file
+      use icedrv_forcing, only: atm_longitude, atm_latitude
       use icedrv_forcing, only: ice_data_file
       use icedrv_forcing, only: atm_data_format, ocn_data_format, bgc_data_format
       use icedrv_forcing, only: data_dir
@@ -179,8 +180,10 @@
         default_season,  wave_spec_type,  cpl_frazil,      &
         precip_units,    fyear_init,      ycycle,          &
         atm_data_type,   ocn_data_type,   bgc_data_type,   &
+        atm_longitude,   atm_latitude,                     &
         lateral_flux_type,                                &
         atm_data_file,   ocn_data_file,   bgc_data_file,   &
+        atm_pert_file,                                     &
         ice_data_file,                                     &
         atm_data_format, ocn_data_format, bgc_data_format, &
         data_dir,        trestore,        restore_ocn
@@ -273,6 +276,9 @@
       atm_data_format = 'bin'     ! file format ('bin'=binary or 'nc'=netcdf)
       atm_data_type   = 'default' ! source of atmospheric forcing data
       atm_data_file   = ' '       ! atmospheric forcing data file
+      atm_pert_file   = ' '       ! atmospheric forcing data file
+      atm_longitude   = 150.0     ! atmospheric forcing longitude (only for ECWMF forcing) 
+      atm_latitude    = 85.0      ! atmospheric forcing latitude (only for ECMWF forcing)
       precip_units    = 'mks'     ! 'mm_per_month' or
                                   ! 'mm_per_sec' = 'mks' = kg/m^2 s
       oceanmixed_ice  = .false.   ! if true, use internal ocean mixed layer
@@ -775,12 +781,18 @@
          write(nu_diag,*)    '  lateral_flux_type        = ', trim(lateral_flux_type)
 
          write(nu_diag,1030) ' atm_data_file             = ', trim(atm_data_file)
+         write(nu_diag,1030) ' atm_pert_file             = ', trim(atm_pert_file)
          write(nu_diag,1030) ' ocn_data_file             = ', trim(ocn_data_file)
          write(nu_diag,1030) ' bgc_data_file             = ', trim(bgc_data_file)
          write(nu_diag,1030) ' ice_data_file             = ', trim(ice_data_file)
 
          if (trim(atm_data_type)=='default') &
          write(nu_diag,1030) ' default_season            = ', trim(default_season)
+
+         if (trim(atm_data_type)=='ECMWF') then
+         write(nu_diag,1005) ' atm longitude             = ', atm_longitude
+         write(nu_diag,1005) ' atm latitude              = ', atm_latitude
+         endif
 
          write(nu_diag,1030) ' cpl_frazil                = ', trim(cpl_frazil)
          write(nu_diag,1010) ' update_ocn_f              = ', update_ocn_f
@@ -1022,6 +1034,9 @@
 ! author: Elizabeth C. Hunke, LANL
 
       subroutine init_grid2
+      use icedrv_forcing, only: atm_longitude, atm_latitude
+      use icedrv_forcing, only: atm_data_type
+      use icedrv_constants, only: c180
 
       integer :: i
       real (kind=dbl_kind) :: pi, puny
@@ -1046,6 +1061,11 @@
       do i = 2, nx
          TLAT(i) = TLAT(i-1) - p5*pi/180._dbl_kind ! half-deg increments
       enddo
+
+      IF(atm_data_type == 'ECMWF') THEN
+          TLAT(:) = atm_latitude * pi / c180 
+          TLON(:) = atm_longitude * pi / c180 
+      ENDIF
 
       tmask(:) = .true.
 

@@ -14,6 +14,31 @@
       implicit none
       private
       public :: icedrv_system_abort
+      public :: handle_err
+
+      type, public :: nc_data
+          character (char_len_long), public    ::    y_filename = " "
+          character (10), public               ::    y_lonname = " "
+          character (10), public               ::    y_latname = " "
+          integer(kind=int_kind), public       ::    file_id   !netcdf id
+          real(kind=dbl_kind), public          ::    zpoint_lon, zpoint_lat
+          integer(kind=int_kind), public       ::    id_x      !point lon index
+          integer(kind=int_kind), public       ::    id_y      !point lat index
+          character (10), public               ::    y_tunits   !time units
+          integer(kind=int8_kind), public       ::    idate_0(7)   !dataset reference date
+          real(kind=dbl_kind), public, allocatable   ::    ztimes(:)    !: dataset times in time units (y_tunits) from ref date (idate_0)
+           
+      end type nc_data
+
+      type, public :: nc_data1d
+          character (char_len_long), public    ::    y_filename = " "
+          integer(kind=int_kind), public       ::    file_id   !netcdf id
+          character (10), public               ::    y_tunits   !time units
+          integer(kind=int8_kind), public       ::    idate_0(7)   !dataset reference date
+          real(kind=dbl_kind), public, allocatable   ::    ztimes(:)    !: dataset times in time units (y_tunits) from ref date (idate_0)
+           
+      end type nc_data1d
+
 
 !=======================================================================
 
@@ -51,6 +76,32 @@
       end subroutine icedrv_system_abort
 
 !=======================================================================
+
+    SUBROUTINE handle_err(kerr,herrstr,hsubname)
+       !!----------------------------------------------------------------------
+       !!                 ***  handle_err  ***
+       !!
+       !! **Purpose  :   print a error string that allows identification of
+       !!                the error source
+       !!
+       !! ** Method  :   write a string and stop the program
+       !!
+       !! ** Action  : - first action
+       !!----------------------------------------------------------------------
+ 
+       IMPLICIT NONE
+ 
+       !arguments
+       INTEGER, INTENT(in )             ::      kerr            ! error id
+       CHARACTER(*), INTENT(in )        ::      herrstr       ! error string
+       CHARACTER(*), INTENT(in )        ::      hsubname        ! subroutine or function name
+ 
+       WRITE(nu_diag,*) herrstr,' ', hsubname
+       WRITE(nu_diag,*) 'Error code: ', kerr
+ 
+       STOP ' Error stop handle_err'
+ 
+    END SUBROUTINE handle_err
 
       end module icedrv_system
 
