@@ -68,7 +68,21 @@
       !-----------------------------------------------------------------
 
       real (kind=dbl_kind), parameter, public :: &
-         omega     = 7.292e-5_dbl_kind   ! angular velocity of earth (rad/sec)
+         omega     = 7.292e-5_dbl_kind, &   ! angular velocity of earth (rad/sec)
+         ppCp_dry  = 1005.0D0 , &         !: Specic heat of dry air, constant pressure       [J/K/kg]
+         ppCp_vap  = 1860.0D0 , &         !: Specic heat of water vapor, constant pressure   [J/K/kg]
+         ppR_dry   = 287.05D0 , &            !: Specific gas constant for dry air               [J/K/kg]
+         ppR_vap   = 461.495D0 , &           !: Specific gas constant for water vapor           [J/K/kg]
+         pp_eps0   = ppR_dry/ppR_vap , &  !: ratio of gas constant for dry air and water vapor => ~ 0.622
+         pp_ctv0   = ppR_vap/ppR_dry - 1.D0 , &  !: for virtual temperature (== (1-eps)/eps) => ~ 0.608
+         pp_tt0 = 273.16D0 , &           !: triple point of temperature    [K]
+
+   !! Constants for Goff formula in the presence of ice:
+         rAg_i = -9.09718D0, &
+         rBg_i = -3.56654D0, &
+         rCg_i = 0.876793D0, &
+         rDg_i = LOG10(6.1071D0)
+   !! --------------------------------------------------
 
       !-----------------------------------------------------------------
       ! numbers used outside the column package
